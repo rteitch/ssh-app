@@ -53,6 +53,14 @@ contextBridge.exposeInMainWorld('sshApi', {
   showOpenDialog: (options: any) => ipcRenderer.invoke('dialog:open', options),
   showSaveDialog: (options: any) => ipcRenderer.invoke('dialog:save', options),
 
+  // Local File System
+  fsListLocal: (path: string) => ipcRenderer.invoke('fs:listLocal', path),
+  fsGetHomeDir: () => ipcRenderer.invoke('fs:getHomeDir'),
+  fsDeleteLocal: (path: string) => ipcRenderer.invoke('fs:deleteLocal', path),
+  fsMkdirLocal: (path: string) => ipcRenderer.invoke('fs:mkdirLocal', path),
+  fsRenameLocal: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:renameLocal', oldPath, newPath),
+  fsExistsLocal: (path: string) => ipcRenderer.invoke('fs:existsLocal', path),
+
   // Transfer progress
   onTransferProgress: (callback: (progress: any) => void) => {
     const handler = (_event: any, progress: any) => callback(progress)

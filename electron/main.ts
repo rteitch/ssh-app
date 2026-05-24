@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import { closeDatabase } from './db/database'
 import * as hostRepo from './db/hostRepository'
 import * as snippetRepo from './db/snippetRepository'
@@ -136,13 +137,13 @@ function registerIPC() {
 
   ipcMain.handle('sftp:download', async (_event: any, sessionId: string, remotePath: string, localPath: string) => {
     await sftpManager.downloadFile(sessionId, remotePath, localPath, (transferred, total) => {
-      mainWindow?.webContents.send('sftp:progress', { transferred, total, percent: Math.round((transferred / total) * 100) })
+      mainWindow?.webContents.send('sftp:progress', { remotePath, localPath, transferred, total, percent: Math.round((transferred / total) * 100) })
     })
   })
 
   ipcMain.handle('sftp:upload', async (_event: any, sessionId: string, localPath: string, remotePath: string) => {
     await sftpManager.uploadFile(sessionId, localPath, remotePath, (transferred, total) => {
-      mainWindow?.webContents.send('sftp:progress', { transferred, total, percent: Math.round((transferred / total) * 100) })
+      mainWindow?.webContents.send('sftp:progress', { localPath, remotePath, transferred, total, percent: Math.round((transferred / total) * 100) })
     })
   })
 
@@ -177,5 +178,118 @@ function registerIPC() {
   ipcMain.handle('dialog:save', async (_event: any, options: any) => {
     if (!mainWindow) return { canceled: true, filePath: undefined }
     return dialog.showSaveDialog(mainWindow, options)
+  })
+
+  // Local File System
+  ipcMain.handle('fs:listLocal', async (_event: any, inputPath: string) => {
+    try {
+      const resolvedPath = path.resolve(inputPath)
+      
+      // Safety check: ensure resolvedPath exists and is a directory
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`Path does not exist: ${inputPath}`)
+      }
+      
+      const stats = fs.statSync(resolvedPath)
+      if (!stats.isDirectory()) {
+        throw new Error(`Path is not a directory: ${inputPath}`)
+      }
+
+      const files = fs.readdirSync(resolvedPath, { withFileTypes: true })
+      
+      const fileList = files.map(dirent => {
+        const filePath = path.join(resolvedPath, dirent.name)
+        let fstats
+        try {
+          fstats = fs.statSync(filePath)
+        } catch (err) {
+          fstats = { size: 0, mode: 0, atimeMs: 0, mtimeMs: 0, uid: 0, gid: 0 } as any
+        }
+        
+        return {
+          filename: dirent.name,
+          longname: dirent.name,
+          attrs: {
+            size: fstats.size,
+            mode: fstats.mode,
+            atime: Math.round((fstats.atimeMs || 0) / 1000),
+            mtime: Math.round((fstats.mtimeMs || 0) / 1000),
+            uid: fstats.uid || 0,
+            gid: fstats.gid || 0
+          },
+          isDirectory: dirent.isDirectory()
+        }
+      })
+
+      return fileList
+    } catch (err: any) {
+      console.error('Error listing local directory:', err)
+      throw new Error(err.message || String(err))
+    }
+  })
+
+  ipcMain.handle('fs:getHomeDir', () => {
+    return app.getPath('home')
+  })
+
+  ipcMain.handle('fs:deleteLocal', async (_event: any, inputPath: string) => {
+    try {
+      const resolvedPath = path.resolve(inputPath)
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`File does not exist: ${inputPath}`)
+      }
+      
+      // Safety block: prevent deleting critical system folders or root
+      const home = path.resolve(app.getPath('home'))
+      if (resolvedPath === '/' || resolvedPath === 'C:\\' || resolvedPath === home) {
+        throw new Error('Deletions at root or user home directory are blocked for safety.')
+      }
+
+      const stats = fs.statSync(resolvedPath)
+      if (stats.isDirectory()) {
+        fs.rmSync(resolvedPath, { recursive: true, force: true })
+      } else {
+        fs.unlinkSync(resolvedPath)
+      }
+      return true
+    } catch (err: any) {
+      throw new Error(err.message || String(err))
+    }
+  })
+
+  ipcMain.handle('fs:mkdirLocal', async (_event: any, inputPath: string) => {
+    try {
+      const resolvedPath = path.resolve(inputPath)
+      if (fs.existsSync(resolvedPath)) {
+        throw new Error('Directory already exists')
+      }
+      fs.mkdirSync(resolvedPath, { recursive: true })
+      return true
+    } catch (err: any) {
+      throw new Error(err.message || String(err))
+    }
+  })
+
+  ipcMain.handle('fs:renameLocal', async (_event: any, oldPath: string, newPath: string) => {
+    try {
+      const resolvedOld = path.resolve(oldPath)
+      const resolvedNew = path.resolve(newPath)
+      if (!fs.existsSync(resolvedOld)) {
+        throw new Error(`Path does not exist: ${oldPath}`)
+      }
+      fs.renameSync(resolvedOld, resolvedNew)
+      return true
+    } catch (err: any) {
+      throw new Error(err.message || String(err))
+    }
+  })
+
+  ipcMain.handle('fs:existsLocal', async (_event: any, inputPath: string) => {
+    try {
+      const resolvedPath = path.resolve(inputPath)
+      return fs.existsSync(resolvedPath)
+    } catch {
+      return false
+    }
   })
 }
