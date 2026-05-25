@@ -42,12 +42,18 @@ contextBridge.exposeInMainWorld('sshApi', {
   sftpMkdir: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:mkdir', sessionId, remotePath),
   sftpRename: (sessionId: string, oldPath: string, newPath: string) => ipcRenderer.invoke('sftp:rename', sessionId, oldPath, newPath),
   sftpChmod: (sessionId: string, remotePath: string, mode: number) => ipcRenderer.invoke('sftp:chmod', sessionId, remotePath, mode),
+  sftpCancel: (sessionId: string, remotePath: string, direction: string) => ipcRenderer.invoke('sftp:cancel', sessionId, remotePath, direction),
+  sftpCancelAll: (sessionId: string) => ipcRenderer.invoke('sftp:cancelAll', sessionId),
 
   // Snippets
   getSnippets: () => ipcRenderer.invoke('snippets:getAll'),
   createSnippet: (snippet: any) => ipcRenderer.invoke('snippets:create', snippet),
   updateSnippet: (id: string, snippet: any) => ipcRenderer.invoke('snippets:update', id, snippet),
   deleteSnippet: (id: string) => ipcRenderer.invoke('snippets:delete', id),
+
+  // Known Hosts
+  getKnownHosts: () => ipcRenderer.invoke('knownHosts:getAll'),
+  removeKnownHost: (host: string, port: number) => ipcRenderer.invoke('knownHosts:remove', host, port),
 
   // Dialog
   showOpenDialog: (options: any) => ipcRenderer.invoke('dialog:open', options),

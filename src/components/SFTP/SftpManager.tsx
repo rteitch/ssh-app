@@ -16,7 +16,7 @@ interface TransferJob {
   size: number
   transferred: number
   percent: number
-  status: 'pending' | 'transferring' | 'completed' | 'failed'
+  status: 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled'
   error?: string
 }
 
@@ -94,6 +94,22 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
     handleUpload(localPath, remoteDestPath)
   }, [handleUpload])
 
+  const handleCancelTransfer = useCallback(async (job: TransferJob) => {
+    try {
+      await window.sshApi.sftpCancel(sessionId, job.remotePath, job.direction)
+      setTransferQueue(prev => prev.map(j =>
+        j.id === job.id ? { ...j, status: 'cancelled' as const } : j
+      ))
+      setActiveTransferPaths(prev => {
+        const n = new Set(prev)
+        n.delete(job.direction === 'upload' ? job.localPath : job.remotePath)
+        return n
+      })
+    } catch (err: any) {
+      console.error('Cancel failed:', err)
+    }
+  }, [sessionId])
+
   const handleContextMenuUpload = useCallback((localPath: string, filename: string) => {
     handleUpload(localPath, `./${filename}`)
   }, [handleUpload])
@@ -109,6 +125,7 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
   const activeJobs = transferQueue.filter(j => j.status === 'pending' || j.status === 'transferring')
   const completedJobs = transferQueue.filter(j => j.status === 'completed')
   const failedJobs = transferQueue.filter(j => j.status === 'failed')
+  const cancelledJobs = transferQueue.filter(j => j.status === 'cancelled')
 
   return (
     <div className="w-full h-full flex flex-col min-w-0 overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
@@ -163,6 +180,9 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
                 {completedJobs.length > 0 && (
                   <span className="transfer-badge success">{completedJobs.length} Done</span>
                 )}
+                {cancelledJobs.length > 0 && (
+                  <span className="transfer-badge" style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)' }}>{cancelledJobs.length} Cancelled</span>
+                )}
               </div>
             </div>
 
@@ -215,13 +235,34 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
                     </div>
 
                     {/* Status / size */}
-                    <div style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', width: '15%', textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', width: '15%', textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
                       {job.status === 'completed' ? (
                         <span style={{ color: 'var(--success)', fontWeight: 700 }}>Done</span>
                       ) : job.status === 'failed' ? (
                         <span style={{ color: 'var(--error)', fontWeight: 700 }}>Error</span>
+                      ) : job.status === 'cancelled' ? (
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>Cancelled</span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>{formatBytes(job.transferred)}</span>
+                        <>
+                          <span style={{ color: 'var(--text-muted)' }}>{formatBytes(job.transferred)}</span>
+                          <button
+                            onClick={() => handleCancelTransfer(job)}
+                            style={{
+                              background: 'rgba(243, 139, 168, 0.15)',
+                              color: 'var(--error)',
+                              border: 'none',
+                              borderRadius: 'var(--radius-sm)',
+                              padding: '2px 6px',
+                              fontSize: '9px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              lineHeight: 1
+                            }}
+                            title="Cancel transfer"
+                          >
+                            Cancel
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>

@@ -5,6 +5,12 @@ import type { SFTPFile } from '../../src/types'
 
 const sftpSessions = new Map<string, SFTPWrapper>()
 
+interface ActiveTransfer {
+  cancelled: boolean
+  sessionId: string
+}
+const activeTransfers = new Map<string, ActiveTransfer>()
+
 export async function getSFTP(sessionId: string): Promise<SFTPWrapper> {
   if (sftpSessions.has(sessionId)) {
     return sftpSessions.get(sessionId)!
@@ -62,6 +68,10 @@ export async function listDirectory(sessionId: string, remotePath: string): Prom
   })
 }
 
+function transferKey(sessionId: string, remotePath: string, direction: string): string {
+  return `${sessionId}:${direction}:${remotePath}`
+}
+
 export async function downloadFile(
   sessionId: string,
   remotePath: string,
@@ -69,15 +79,28 @@ export async function downloadFile(
   onProgress?: (transferred: number, total: number) => void
 ): Promise<void> {
   const sftp = await getSFTP(sessionId)
+  const key = transferKey(sessionId, remotePath, 'download')
+  const transfer: ActiveTransfer = { cancelled: false, sessionId }
+  activeTransfers.set(key, transfer)
 
   return new Promise((resolve, reject) => {
     sftp.fastGet(remotePath, localPath, {
       concurrency: 4,
       chunkSize: 32768,
       step: (transferred, _chunk, total) => {
+        if (transfer.cancelled) {
+          activeTransfers.delete(key)
+          reject(new Error('Transfer cancelled'))
+          return
+        }
         onProgress?.(transferred, total)
       }
     }, (err) => {
+      activeTransfers.delete(key)
+      if (transfer.cancelled) {
+        reject(new Error('Transfer cancelled'))
+        return
+      }
       if (err) {
         reject(err)
         return
@@ -94,15 +117,28 @@ export async function uploadFile(
   onProgress?: (transferred: number, total: number) => void
 ): Promise<void> {
   const sftp = await getSFTP(sessionId)
+  const key = transferKey(sessionId, remotePath, 'upload')
+  const transfer: ActiveTransfer = { cancelled: false, sessionId }
+  activeTransfers.set(key, transfer)
 
   return new Promise((resolve, reject) => {
     sftp.fastPut(localPath, remotePath, {
       concurrency: 4,
       chunkSize: 32768,
       step: (transferred, _chunk, total) => {
+        if (transfer.cancelled) {
+          activeTransfers.delete(key)
+          reject(new Error('Transfer cancelled'))
+          return
+        }
         onProgress?.(transferred, total)
       }
     }, (err) => {
+      activeTransfers.delete(key)
+      if (transfer.cancelled) {
+        reject(new Error('Transfer cancelled'))
+        return
+      }
       if (err) {
         reject(err)
         return
@@ -110,6 +146,31 @@ export async function uploadFile(
       resolve()
     })
   })
+}
+
+export function cancelTransfer(sessionId: string, remotePath: string, direction: string): boolean {
+  const key = transferKey(sessionId, remotePath, direction)
+  const transfer = activeTransfers.get(key)
+  if (transfer) {
+    transfer.cancelled = true
+    return true
+  }
+  return false
+}
+
+export function cancelAllTransfers(sessionId: string): number {
+  let cancelled = 0
+  for (const [key, transfer] of activeTransfers.entries()) {
+    if (transfer.sessionId === sessionId) {
+      transfer.cancelled = true
+      cancelled++
+    }
+  }
+  return cancelled
+}
+
+export function getActiveTransfers(): string[] {
+  return Array.from(activeTransfers.keys())
 }
 
 export async function deleteFile(sessionId: string, remotePath: string): Promise<void> {

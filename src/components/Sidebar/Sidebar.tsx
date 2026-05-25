@@ -131,7 +131,8 @@ export default function Sidebar({ hosts, collapsed, onToggleCollapse, onConnect,
           flexShrink: 0
         }}
       >
-        <div className="h-12 w-full shrink-0" style={{ WebkitAppRegion: 'drag' } as any} />
+        {/* Traffic lights spacer — must be tall enough to clear macOS buttons */}
+        <div className="w-full shrink-0" style={{ height: '36px', WebkitAppRegion: 'drag' } as any} />
 
         {/* Logo button */}
         <button
@@ -200,16 +201,18 @@ export default function Sidebar({ hosts, collapsed, onToggleCollapse, onConnect,
       }}
       onClick={closeContextMenu}
     >
-      {/* Traffic lights spacer + brand header */}
+      {/* Traffic lights spacer — must be tall enough to clear macOS buttons */}
+      <div className="w-full shrink-0" style={{ height: '36px', WebkitAppRegion: 'drag' } as any} />
+
+      {/* Brand header */}
       <div
         className="flex items-center justify-between px-4 shrink-0"
         style={{
-          height: '52px',
+          height: '44px',
           borderBottom: '1px solid var(--border-subtle)',
-          WebkitAppRegion: 'drag'
-        } as any}
+        }}
       >
-        <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as any}>
+        <div className="flex items-center gap-2.5">
           <div
             className="w-7 h-7 flex items-center justify-center rounded-lg"
             style={{ background: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid rgba(92,158,255,0.18)' }}
@@ -223,7 +226,7 @@ export default function Sidebar({ hosts, collapsed, onToggleCollapse, onConnect,
         <button
           onClick={onToggleCollapse}
           className="w-6 h-6 flex items-center justify-center rounded-md transition-all duration-150"
-          style={{ color: 'var(--text-muted)', WebkitAppRegion: 'no-drag' } as any}
+          style={{ color: 'var(--text-muted)' }}
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; e.currentTarget.style.color = 'var(--text-primary)' }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
           title="Collapse (Ctrl+B)"

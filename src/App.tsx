@@ -39,6 +39,10 @@ declare global {
       sftpMkdir: (sessionId: string, remotePath: string) => Promise<void>
       sftpRename: (sessionId: string, oldPath: string, newPath: string) => Promise<void>
       sftpChmod: (sessionId: string, remotePath: string, mode: number) => Promise<void>
+      sftpCancel: (sessionId: string, remotePath: string, direction: string) => Promise<boolean>
+      sftpCancelAll: (sessionId: string) => Promise<number>
+      getKnownHosts: () => Promise<any[]>
+      removeKnownHost: (host: string, port: number) => Promise<boolean>
       getSnippets: () => Promise<any[]>
       createSnippet: (snippet: any) => Promise<any>
       updateSnippet: (id: string, snippet: any) => Promise<any>
@@ -172,6 +176,29 @@ export default function App() {
         setEditingHost(null)
         setShowAddHost(true)
       }
+      // Ctrl+T — new tab (connect to most recently used host)
+      if (e.ctrlKey && e.key === 't') {
+        e.preventDefault()
+        if (hosts.length > 0) {
+          const sorted = [...hosts].sort((a, b) => {
+            if (!a.last_used && !b.last_used) return 0
+            if (!a.last_used) return 1
+            if (!b.last_used) return -1
+            return new Date(b.last_used).getTime() - new Date(a.last_used).getTime()
+          })
+          handleConnect(sorted[0], 'terminal')
+        } else {
+          setEditingHost(null)
+          setShowAddHost(true)
+        }
+      }
+      // Ctrl+W — close active tab
+      if (e.ctrlKey && e.key === 'w') {
+        e.preventDefault()
+        if (activeTab) {
+          handleCloseTab(activeTab)
+        }
+      }
       // Ctrl+Shift+S to toggle between terminal and sftp
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
@@ -180,7 +207,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [hosts, activeTab])
 
   const handleConnect = async (host: Host, defaultViewMode: 'terminal' | 'sftp' = 'terminal') => {
     const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`

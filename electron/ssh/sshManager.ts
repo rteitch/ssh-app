@@ -1,13 +1,24 @@
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import fs from 'fs'
-import { decryptCredential } from '../security/credentialStore'
+import crypto from 'crypto'
+import { BrowserWindow, dialog } from 'electron'
+import * as knownHostsRepo from '../db/knownHostsRepository'
 import type { SSHConnectionConfig } from '../../src/types'
+
+function getAgentSocket(): string | undefined {
+  if (process.platform === 'win32') {
+    return process.env.OPENSSH_AUTH_SOCK || process.env.SSH_AUTH_SOCK
+  }
+  return process.env.SSH_AUTH_SOCK
+}
 
 export interface SSHSession {
   id: string
   client: Client
   shell?: ClientChannel
   connected: boolean
+  host: string
+  port: number
 }
 
 const sessions = new Map<string, SSHSession>()
@@ -17,7 +28,9 @@ export function createSession(sessionId: string): SSHSession {
   const session: SSHSession = {
     id: sessionId,
     client,
-    connected: false
+    connected: false,
+    host: '',
+    port: 22
   }
   sessions.set(sessionId, session)
   return session
@@ -27,6 +40,58 @@ export function getSession(sessionId: string): SSHSession | undefined {
   return sessions.get(sessionId)
 }
 
+function formatFingerprint(keyBuffer: Buffer): string {
+  const hash = crypto.createHash('sha256').update(keyBuffer).digest('base64')
+  return `SHA256:${hash}`
+}
+
+async function verifyHostKey(host: string, port: number, keyBuffer: Buffer): Promise<boolean> {
+  const fingerprint = formatFingerprint(keyBuffer)
+  const knownHost = knownHostsRepo.getKnownHost(host, port)
+
+  if (!knownHost) {
+    // First time connecting to this host — ask user
+    const result = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Accept & Save', 'Reject'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Unknown Host Key',
+      message: `The authenticity of host '${host}:${port}' can't be established.`,
+      detail: `SHA256 fingerprint:\n${fingerprint}\n\nAre you sure you want to continue connecting?\nThe host key will be saved for future connections.`,
+      noLink: true
+    })
+
+    if (result.response === 0) {
+      knownHostsRepo.addKnownHost(host, port, fingerprint)
+      return true
+    }
+    return false
+  }
+
+  if (knownHost.fingerprint !== fingerprint) {
+    // Fingerprint changed — possible MITM attack!
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Update Key', 'Cancel Connection'],
+      defaultId: 1,
+      cancelId: 1,
+      title: '⚠ WARNING: Host Key Changed!',
+      message: `REMOTE HOST IDENTIFICATION HAS CHANGED for '${host}:${port}'!`,
+      detail: `Expected: ${knownHost.fingerprint}\nReceived: ${fingerprint}\n\nThis could indicate a man-in-the-middle attack!\nOnly proceed if you trust this change.`,
+      noLink: true
+    })
+
+    if (result.response === 0) {
+      knownHostsRepo.updateFingerprint(host, port, fingerprint)
+      return true
+    }
+    return false
+  }
+
+  return true // Fingerprint matches
+}
+
 export function connectSSH(sessionId: string, config: SSHConnectionConfig): Promise<void> {
   return new Promise((resolve, reject) => {
     let session = sessions.get(sessionId)
@@ -34,16 +99,39 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
       session = createSession(sessionId)
     }
 
+    session.host = config.host
+    session.port = config.port
+
     const connectConfig: ConnectConfig = {
       host: config.host,
       port: config.port,
       username: config.username,
-      readyTimeout: 10000,
-      keepaliveInterval: 10000
+      readyTimeout: 15000,
+      keepaliveInterval: 10000,
+      keepaliveCountMax: 3,
+      compress: true,
+      agentForward: true
+    }
+
+    // SSH agent support for key-based auth
+    const agentSocket = getAgentSocket()
+    if (agentSocket && config.auth_type === 'key' && !config.key_path) {
+      connectConfig.agent = agentSocket
+    }
+
+    // Host key verification
+    connectConfig.hostVerifier = async (keyBuffer: Buffer) => {
+      try {
+        return await verifyHostKey(config.host, config.port, keyBuffer)
+      } catch (err) {
+        return false
+      }
     }
 
     if (config.auth_type === 'password' && config.password) {
       connectConfig.password = config.password
+      // Also handle keyboard-interactive prompts that expect the password
+      connectConfig.tryKeyboard = true
     } else if (config.auth_type === 'key' && config.key_path) {
       try {
         connectConfig.privateKey = fs.readFileSync(config.key_path)
@@ -61,6 +149,17 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
       }
     }
 
+    // Handle keyboard-interactive authentication (2FA, Duo, etc.)
+    session.client.on('keyboard-interactive', (_name, _instructions, _instructionsLang, prompts, finish) => {
+      if (config.auth_type === 'password' && config.password) {
+        // Auto-respond with password for all prompts
+        finish([config.password])
+      } else {
+        // Can't handle interactive prompts without a password
+        finish([])
+      }
+    })
+
     session.client.on('ready', () => {
       session!.connected = true
       resolve()
@@ -72,6 +171,10 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
     })
 
     session.client.on('close', () => {
+      session!.connected = false
+    })
+
+    session.client.on('end', () => {
       session!.connected = false
     })
 
@@ -159,4 +262,58 @@ export function getSFTP(sessionId: string): Promise<any> {
       resolve(sftp)
     })
   })
+}
+
+export function executeCommand(sessionId: string, command: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const session = sessions.get(sessionId)
+    if (!session || !session.connected) {
+      reject(new Error('Session not connected'))
+      return
+    }
+
+    session.client.exec(command, (err, stream) => {
+      if (err) {
+        reject(err)
+        return
+      }
+
+      let stdout = ''
+      let stderr = ''
+
+      stream.on('data', (data: Buffer) => {
+        stdout += data.toString('utf-8')
+      })
+
+      stream.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString('utf-8')
+      })
+
+      stream.on('close', (code: number) => {
+        if (code === 0) {
+          resolve(stdout)
+        } else {
+          reject(new Error(`Command exited with code ${code}: ${stderr}`))
+        }
+      })
+    })
+  })
+}
+
+export function getSessionCount(): number {
+  return sessions.size
+}
+
+export function cleanupStaleSessions(): number {
+  let cleaned = 0
+  for (const [id, session] of sessions.entries()) {
+    if (!session.connected) {
+      try {
+        session.client.end()
+      } catch {}
+      sessions.delete(id)
+      cleaned++
+    }
+  }
+  return cleaned
 }
