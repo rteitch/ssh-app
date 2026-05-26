@@ -8,6 +8,8 @@ import * as snippetRepo from './db/snippetRepository'
 import { encryptCredential, decryptCredential } from './security/credentialStore'
 import * as sshManager from './ssh/sshManager'
 import * as sftpManager from './ssh/sftpManager'
+import { handleRemoteCompress, handleRemoteExtract } from './handlers/remote-archive'
+import { handleLocalCompress, handleLocalExtract } from './handlers/local-archive'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -425,5 +427,26 @@ function registerIPC() {
     } catch {
       return false
     }
+  })
+
+  // ── Enterprise Archive Handlers ─────────────────────────────────────
+  ipcMain.handle('sftp:remoteCompress', (event, opts) => {
+    if (!mainWindow) throw new Error('Main window not available')
+    return handleRemoteCompress(event, opts, mainWindow)
+  })
+
+  ipcMain.handle('sftp:remoteExtract', (event, opts) => {
+    if (!mainWindow) throw new Error('Main window not available')
+    return handleRemoteExtract(event, opts, mainWindow)
+  })
+
+  ipcMain.handle('fs:localCompress', (event, opts) => {
+    if (!mainWindow) throw new Error('Main window not available')
+    return handleLocalCompress(event, opts, mainWindow)
+  })
+
+  ipcMain.handle('fs:localExtract', (event, opts) => {
+    if (!mainWindow) throw new Error('Main window not available')
+    return handleLocalExtract(event, opts, mainWindow)
   })
 }

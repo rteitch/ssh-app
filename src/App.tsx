@@ -57,6 +57,38 @@ declare global {
       fsRenameLocal: (oldPath: string, newPath: string) => Promise<boolean>
       fsExistsLocal: (path: string) => Promise<boolean>
       onTransferProgress: (callback: (progress: any) => void) => () => void
+      sftpRemoteCompress: (opts: {
+        sessionId: string;
+        remotePath: string;
+        archiveName: string;
+        archiveType: 'zip' | 'tar.gz' | 'tar.bz2' | 'tar.xz';
+      }) => Promise<{ success: boolean; archivePath?: string; error?: string }>
+      sftpRemoteExtract: (opts: {
+        sessionId: string;
+        archivePath: string;
+        destDir?: string;
+      }) => Promise<{ success: boolean; error?: string }>
+      fsLocalCompress: (opts: {
+        sourcePath: string;
+        outputPath: string;
+        archiveType: 'zip' | 'tar.gz';
+        compressionLevel?: number;
+      }) => Promise<{ success: boolean; outputPath?: string; error?: string }>
+      fsLocalExtract: (opts: {
+        archivePath: string;
+        destDir: string;
+        overwrite?: boolean;
+      }) => Promise<{ success: boolean; error?: string }>
+      onArchiveProgress: (
+        callback: (data: {
+          sessionId?: string;
+          phase: 'compressing' | 'extracting' | 'done' | 'error' | 'warning';
+          message: string;
+          percent?: number;
+          bytesProcessed?: number;
+        }) => void
+      ) => void
+      offArchiveProgress: () => void
     }
   }
 }

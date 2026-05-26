@@ -72,5 +72,49 @@ contextBridge.exposeInMainWorld('sshApi', {
     const handler = (_event: any, progress: any) => callback(progress)
     ipcRenderer.on('sftp:progress', handler)
     return () => ipcRenderer.removeListener('sftp:progress', handler)
+  },
+
+  // ── Enterprise Archive API ──────────────────────────────────────────
+  sftpRemoteCompress: (opts: {
+    sessionId: string;
+    remotePath: string;
+    archiveName: string;
+    archiveType: 'zip' | 'tar.gz' | 'tar.bz2' | 'tar.xz';
+  }) => ipcRenderer.invoke('sftp:remoteCompress', opts),
+
+  sftpRemoteExtract: (opts: {
+    sessionId: string;
+    archivePath: string;
+    destDir?: string;
+  }) => ipcRenderer.invoke('sftp:remoteExtract', opts),
+
+  fsLocalCompress: (opts: {
+    sourcePath: string;
+    outputPath: string;
+    archiveType: 'zip' | 'tar.gz';
+    compressionLevel?: number;
+  }) => ipcRenderer.invoke('fs:localCompress', opts),
+
+  fsLocalExtract: (opts: {
+    archivePath: string;
+    destDir: string;
+    overwrite?: boolean;
+  }) => ipcRenderer.invoke('fs:localExtract', opts),
+
+  onArchiveProgress: (
+    callback: (data: {
+      sessionId?: string;
+      phase: 'compressing' | 'extracting' | 'done' | 'error' | 'warning';
+      message: string;
+      percent?: number;
+      bytesProcessed?: number;
+    }) => void
+  ) => {
+    ipcRenderer.removeAllListeners('archive:progress')
+    ipcRenderer.on('archive:progress', (_event, data) => callback(data))
+  },
+
+  offArchiveProgress: () => {
+    ipcRenderer.removeAllListeners('archive:progress')
   }
 })

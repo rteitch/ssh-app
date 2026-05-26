@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { SFTPFile } from '../../types'
+import { ArchiveProgressModal } from './ArchiveProgressModal'
 
 interface RemotePanelProps {
   sessionId: string
@@ -77,6 +78,50 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
   const [files, setFiles] = useState<SFTPFile[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Archive progress state
+  const [archiveModal, setArchiveModal] = useState({
+    open: false,
+    title: '',
+  })
+
+  const handleRemoteCompress = async (file: SFTPFile, archiveType: 'zip' | 'tar.gz') => {
+    const defaultName = `${file.filename}.${archiveType === 'zip' ? 'zip' : 'tar.gz'}`
+    const archiveName = window.prompt('Nama arsip output:', defaultName)
+    if (!archiveName) return
+
+    setContextMenu(null)
+    setArchiveModal({ open: true, title: `Mengompresi ${file.filename} ke ${archiveName}` })
+
+    const result = await window.sshApi.sftpRemoteCompress({
+      sessionId,
+      remotePath: `${currentPath}/${file.filename}`,
+      archiveName,
+      archiveType,
+    })
+
+    if (result.success) {
+      loadRemoteFiles(currentPath)
+    }
+  }
+
+  const handleRemoteExtract = async (file: SFTPFile) => {
+    setContextMenu(null)
+    setArchiveModal({ open: true, title: `Mengekstrak ${file.filename}` })
+
+    const result = await window.sshApi.sftpRemoteExtract({
+      sessionId,
+      archivePath: `${currentPath}/${file.filename}`,
+    })
+
+    if (result.success) {
+      loadRemoteFiles(currentPath)
+    }
+  }
+
+  const ARCHIVE_EXTENSIONS = ['.zip', '.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar', '.gz', '.bz2']
+  const isArchiveFile = (filename: string): boolean =>
+    ARCHIVE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext))
   
   // Navigation & Search States
   const [pathInput, setPathInput] = useState<string>('/')
@@ -621,6 +666,27 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
           >
             Hapus Item
           </button>
+          <div className="border-t border-[#45475a]/50 my-1.5" />
+          <button
+            onClick={() => handleRemoteCompress(contextMenu.file, 'zip')}
+            className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-3.5 text-[#a6e3a1] hover:bg-[#181825]"
+          >
+            Compress ke Zip (.zip)
+          </button>
+          <button
+            onClick={() => handleRemoteCompress(contextMenu.file, 'tar.gz')}
+            className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-3.5 text-[#a6e3a1] hover:bg-[#181825]"
+          >
+            Compress ke Tar.gz (.tar.gz)
+          </button>
+          {isArchiveFile(contextMenu.file.filename) && (
+            <button
+              onClick={() => handleRemoteExtract(contextMenu.file)}
+              className="w-full px-4 py-2.5 text-xs font-medium text-left flex items-center gap-3.5 text-[#f9e2af] hover:bg-[#181825]"
+            >
+              Extract Here
+            </button>
+          )}
         </div>
       )}
 
@@ -820,6 +886,12 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
           </div>
         </div>
       )}
+
+      <ArchiveProgressModal
+        isOpen={archiveModal.open}
+        onClose={() => setArchiveModal(prev => ({ ...prev, open: false }))}
+        title={archiveModal.title}
+      />
     </div>
   )
 }

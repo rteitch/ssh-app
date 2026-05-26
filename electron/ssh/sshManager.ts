@@ -317,6 +317,44 @@ export function executeCommand(sessionId: string, command: string): Promise<stri
   })
 }
 
+export function executeCommandWithStream(
+  sessionId: string,
+  command: string,
+  onStderr: (data: string) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const session = sessions.get(sessionId)
+    if (!session || !session.connected) {
+      reject(new Error('Session not connected'))
+      return
+    }
+
+    session.client.exec(command, (err, stream) => {
+      if (err) {
+        reject(err)
+        return
+      }
+
+      // Salurkan stdout dan stderr ke callback agar user mendapat feedback real-time
+      stream.on('data', (data: Buffer) => {
+        onStderr(data.toString('utf-8'))
+      })
+
+      stream.stderr.on('data', (data: Buffer) => {
+        onStderr(data.toString('utf-8'))
+      })
+
+      stream.on('close', (code: number) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`Command exited with code ${code}`))
+        }
+      })
+    })
+  })
+}
+
 export function getSessionCount(): number {
   return sessions.size
 }
