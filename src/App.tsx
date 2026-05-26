@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar/Sidebar'
 import TerminalTab from './components/Terminal/TerminalTab'
 import TabBar from './components/Terminal/TabBar'
@@ -14,6 +14,7 @@ interface Tab {
   hostName: string
   sessionId: string
   connected: boolean
+  viewMode?: ViewMode
 }
 
 declare global {
@@ -39,7 +40,7 @@ declare global {
       sftpMkdir: (sessionId: string, remotePath: string) => Promise<void>
       sftpRename: (sessionId: string, oldPath: string, newPath: string) => Promise<void>
       sftpChmod: (sessionId: string, remotePath: string, mode: number) => Promise<void>
-      sftpCancel: (sessionId: string, remotePath: string, direction: string) => Promise<boolean>
+      sftpCancel: (sessionId: string, remotePath: string, localPath: string, direction: string) => Promise<boolean>
       sftpCancelAll: (sessionId: string) => Promise<number>
       getKnownHosts: () => Promise<any[]>
       removeKnownHost: (host: string, port: number) => Promise<boolean>
@@ -139,7 +140,20 @@ export default function App() {
   const [showAddHost, setShowAddHost] = useState(false)
   const [editingHost, setEditingHost] = useState<Host | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
+  const activeTabObj = tabs.find(t => t.id === activeTab)
+  const viewMode = activeTabObj ? (activeTabObj.viewMode || 'terminal') : 'terminal'
+
+  const setViewMode = useCallback((mode: ViewMode | ((prev: ViewMode) => ViewMode)) => {
+    if (!activeTab) return
+    setTabs(prev => prev.map(tab => {
+      if (tab.id === activeTab) {
+        const currentMode = tab.viewMode || 'terminal'
+        const nextMode = typeof mode === 'function' ? mode(currentMode) : mode
+        return { ...tab, viewMode: nextMode }
+      }
+      return tab
+    }))
+  }, [activeTab])
 
   // Snippet drawer state
   const [showSnippetDrawer, setShowSnippetDrawer] = useState(false)
@@ -164,6 +178,92 @@ export default function App() {
     loadHosts()
     loadSnippets()
   }, [loadHosts, loadSnippets])
+
+
+  const connectingHostsRef = useRef<Set<string>>(new Set())
+
+  const handleConnect = useCallback(async (host: Host, defaultViewMode: 'terminal' | 'sftp' = 'terminal') => {
+    // Check lock to prevent rapid double-clicks
+    if (connectingHostsRef.current.has(host.id)) return
+
+    // Check if there is already an active tab for this host
+    const existingTab = tabs.find(t => t.hostId === host.id)
+    if (existingTab) {
+      setActiveTab(existingTab.id)
+      if (existingTab.viewMode !== defaultViewMode) {
+        setTabs(prev => prev.map(tab =>
+          tab.id === existingTab.id ? { ...tab, viewMode: defaultViewMode } : tab
+        ))
+      }
+      return
+    }
+
+    connectingHostsRef.current.add(host.id)
+
+    const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const newTab: Tab = {
+      id: sessionId,
+      hostId: host.id,
+      hostName: host.name,
+      sessionId,
+      connected: false,
+      viewMode: defaultViewMode
+    }
+
+    setTabs(prev => [...prev, newTab])
+    setActiveTab(sessionId)
+
+    try {
+      const config: any = {
+        host: host.host,
+        port: host.port,
+        username: host.username,
+        auth_type: host.auth_type,
+        hostId: host.id
+      }
+
+      if (host.auth_type === 'password' && host.password_enc) {
+        config.password = host.password_enc
+      } else if (host.auth_type === 'key' && host.key_path) {
+        config.key_path = host.key_path
+      } else if (host.auth_type === 'key_passphrase' && host.key_path && host.passphrase_enc) {
+        config.key_path = host.key_path
+        config.passphrase = host.passphrase_enc
+      }
+
+      await window.sshApi.connect(sessionId, config)
+      await window.sshApi.openShell(sessionId)
+
+      setTabs(prev => prev.map(tab =>
+        tab.id === sessionId ? { ...tab, connected: true } : tab
+      ))
+    } catch (err: any) {
+      console.error('Connection failed:', err)
+      alert(`Connection failed: ${err.message || err}`)
+      setTabs(prev => {
+        const newTabs = prev.filter(tab => tab.id !== sessionId)
+        if (activeTab === sessionId) {
+          setActiveTab(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null)
+        }
+        return newTabs
+      })
+    } finally {
+      connectingHostsRef.current.delete(host.id)
+    }
+  }, [tabs, activeTab])
+
+  const handleCloseTab = useCallback(async (tabId: string) => {
+    try {
+      await window.sshApi.disconnect(tabId)
+    } catch (err: any) {
+      console.error(`Failed to disconnect tab ${tabId}:`, err)
+    }
+    const newTabs = tabs.filter(tab => tab.id !== tabId)
+    setTabs(newTabs)
+    if (activeTab === tabId) {
+      setActiveTab(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null)
+    }
+  }, [tabs, activeTab])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -207,66 +307,8 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [hosts, activeTab])
+  }, [hosts, activeTab, tabs, viewMode, handleConnect, handleCloseTab, setViewMode])
 
-  const handleConnect = async (host: Host, defaultViewMode: 'terminal' | 'sftp' = 'terminal') => {
-    const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const newTab: Tab = {
-      id: sessionId,
-      hostId: host.id,
-      hostName: host.name,
-      sessionId,
-      connected: false
-    }
-
-    setTabs(prev => [...prev, newTab])
-    setActiveTab(sessionId)
-    setViewMode(defaultViewMode)
-
-    try {
-      const config: any = {
-        host: host.host,
-        port: host.port,
-        username: host.username,
-        auth_type: host.auth_type,
-        hostId: host.id
-      }
-
-      if (host.auth_type === 'password' && host.password_enc) {
-        config.password = host.password_enc
-      } else if (host.auth_type === 'key' && host.key_path) {
-        config.key_path = host.key_path
-      } else if (host.auth_type === 'key_passphrase' && host.key_path && host.passphrase_enc) {
-        config.key_path = host.key_path
-        config.passphrase = host.passphrase_enc
-      }
-
-      await window.sshApi.connect(sessionId, config)
-      await window.sshApi.openShell(sessionId)
-
-      setTabs(prev => prev.map(tab =>
-        tab.id === sessionId ? { ...tab, connected: true } : tab
-      ))
-    } catch (err: any) {
-      console.error('Connection failed:', err)
-      alert(`Connection failed: ${err.message || err}`)
-      setTabs(prev => prev.filter(tab => tab.id !== sessionId))
-      if (activeTab === sessionId) {
-        setActiveTab(tabs.length > 1 ? tabs[tabs.length - 2].id : null)
-      }
-    }
-  }
-
-  const handleCloseTab = async (tabId: string) => {
-    try {
-      await window.sshApi.disconnect(tabId)
-    } catch {}
-    setTabs(prev => prev.filter(tab => tab.id !== tabId))
-    if (activeTab === tabId) {
-      const remaining = tabs.filter(tab => tab.id !== tabId)
-      setActiveTab(remaining.length > 0 ? remaining[remaining.length - 1].id : null)
-    }
-  }
 
   const handleSaveHost = async (hostData: any) => {
     try {
@@ -452,10 +494,19 @@ export default function App() {
               {/* SFTP view — only for the active tab */}
               {activeTab && viewMode === 'sftp' && (
                 <div className="absolute inset-0 animate-fade-in">
-                  <SftpManager
-                    sessionId={tabs.find(t => t.id === activeTab)?.sessionId || ''}
-                    isActive={viewMode === 'sftp'}
-                  />
+                  {!activeTabData?.connected ? (
+                    <div className="w-full h-full flex flex-col justify-center items-center gap-4" style={{ background: 'var(--bg-primary)' }}>
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--accent)]" style={{ borderColor: 'var(--accent) transparent var(--accent) transparent' }} />
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                        Connecting to {activeTabData?.hostName}...
+                      </span>
+                    </div>
+                  ) : (
+                    <SftpManager
+                      sessionId={activeTabData.sessionId}
+                      isActive={viewMode === 'sftp'}
+                    />
+                  )}
                 </div>
               )}
             </>

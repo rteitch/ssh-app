@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import { BrowserWindow, dialog } from 'electron'
 import * as knownHostsRepo from '../db/knownHostsRepository'
 import type { SSHConnectionConfig } from '../../src/types'
+import { closeSFTP } from './sftpManager'
 
 function getAgentSocket(): string | undefined {
   if (process.platform === 'win32') {
@@ -97,6 +98,8 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
     let session = sessions.get(sessionId)
     if (!session) {
       session = createSession(sessionId)
+    } else {
+      session.client.removeAllListeners()
     }
 
     session.host = config.host
@@ -110,13 +113,14 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
       keepaliveInterval: 10000,
       keepaliveCountMax: 3,
       compress: true,
-      agentForward: true
+      agentForward: false
     }
 
     // SSH agent support for key-based auth
     const agentSocket = getAgentSocket()
     if (agentSocket && config.auth_type === 'key' && !config.key_path) {
       connectConfig.agent = agentSocket
+      connectConfig.agentForward = true
     }
 
     // Host key verification
@@ -167,15 +171,18 @@ export function connectSSH(sessionId: string, config: SSHConnectionConfig): Prom
 
     session.client.on('error', (err) => {
       session!.connected = false
+      try { closeSFTP(sessionId) } catch {}
       reject(err)
     })
 
     session.client.on('close', () => {
       session!.connected = false
+      try { closeSFTP(sessionId) } catch {}
     })
 
     session.client.on('end', () => {
       session!.connected = false
+      try { closeSFTP(sessionId) } catch {}
     })
 
     session.client.connect(connectConfig)
@@ -216,10 +223,18 @@ export function openShell(sessionId: string, onData: (data: string) => void, onC
   })
 }
 
-export function writeToShell(sessionId: string, data: string): void {
+export function writeToShell(sessionId: string, data: string): boolean {
   const session = sessions.get(sessionId)
-  if (session?.shell) {
+  if (!session?.shell) {
+    console.error(`Shell not available for session ${sessionId}`)
+    return false
+  }
+  try {
     session.shell.write(data)
+    return true
+  } catch (err) {
+    console.error('Write to shell failed:', err)
+    return false
   }
 }
 
@@ -234,11 +249,13 @@ export function disconnectSSH(sessionId: string): void {
   const session = sessions.get(sessionId)
   if (session) {
     if (session.shell) {
+      try { session.shell.end?.() } catch {}
       session.shell.close()
     }
     session.client.end()
     session.connected = false
     sessions.delete(sessionId)
+    try { closeSFTP(sessionId) } catch {}
   }
 }
 
@@ -310,6 +327,9 @@ export function cleanupStaleSessions(): number {
     if (!session.connected) {
       try {
         session.client.end()
+      } catch {}
+      try {
+        closeSFTP(id)
       } catch {}
       sessions.delete(id)
       cleaned++

@@ -37,6 +37,7 @@ function createWindow() {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    // mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -85,6 +86,9 @@ function validatePath(p: string, name = 'path'): void {
   if (p.includes('\0')) {
     throw new Error(`Invalid ${name}: contains null byte`)
   }
+  if (p.includes('..')) {
+    throw new Error(`Invalid ${name}: path traversal not allowed`)
+  }
 }
 
 function registerIPC() {
@@ -92,8 +96,11 @@ function registerIPC() {
   ipcMain.handle('hosts:getAll', () => hostRepo.getAllHosts())
   ipcMain.handle('hosts:getById', (_event: any, id: string) => hostRepo.getHostById(id))
   ipcMain.handle('hosts:create', (_event: any, host: any) => {
-    if (!host?.name || !host?.host || !host?.username) {
-      throw new Error('Missing required host fields: name, host, username')
+    if (!host?.name || !host?.host || !host?.username || !host?.auth_type) {
+      throw new Error('Missing required host fields: name, host, username, auth_type')
+    }
+    if (!['password', 'key', 'key_passphrase'].includes(host.auth_type)) {
+      throw new Error('Invalid authentication type')
     }
     if (host.port && (typeof host.port !== 'number' || host.port < 1 || host.port > 65535)) {
       throw new Error('Port must be between 1 and 65535')
@@ -109,6 +116,12 @@ function registerIPC() {
   ipcMain.handle('hosts:update', (_event: any, id: string, host: any) => {
     if (!id || typeof id !== 'string') {
       throw new Error('Invalid host ID')
+    }
+    if (host.auth_type && !['password', 'key', 'key_passphrase'].includes(host.auth_type)) {
+      throw new Error('Invalid authentication type')
+    }
+    if (host.port && (typeof host.port !== 'number' || host.port < 1 || host.port > 65535)) {
+      throw new Error('Port must be between 1 and 65535')
     }
     if (host.password_enc) {
       host.password_enc = encryptCredential(host.password_enc)
@@ -135,7 +148,12 @@ function registerIPC() {
     if (config.passphrase) {
       config.passphrase = decryptCredential(config.passphrase)
     }
-    await sshManager.connectSSH(sessionId, config)
+    await Promise.race([
+      sshManager.connectSSH(sessionId, config),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Connection timeout (30s)')), 30000)
+      )
+    ])
     hostRepo.updateLastUsed(config.hostId)
   })
 
@@ -190,7 +208,7 @@ function registerIPC() {
     validatePath(remotePath, 'remote path')
     validatePath(localPath, 'local path')
     await sftpManager.downloadFile(sessionId, remotePath, localPath, (transferred, total) => {
-      mainWindow?.webContents.send('sftp:progress', { remotePath, localPath, transferred, total, percent: Math.round((transferred / total) * 100) })
+      mainWindow?.webContents.send('sftp:progress', { remotePath, localPath, transferred, total, percent: total > 0 ? Math.round((transferred / total) * 100) : 0 })
     })
   })
 
@@ -199,7 +217,7 @@ function registerIPC() {
     validatePath(localPath, 'local path')
     validatePath(remotePath, 'remote path')
     await sftpManager.uploadFile(sessionId, localPath, remotePath, (transferred, total) => {
-      mainWindow?.webContents.send('sftp:progress', { localPath, remotePath, transferred, total, percent: Math.round((transferred / total) * 100) })
+      mainWindow?.webContents.send('sftp:progress', { localPath, remotePath, transferred, total, percent: total > 0 ? Math.round((transferred / total) * 100) : 0 })
     })
   })
 
@@ -231,9 +249,11 @@ function registerIPC() {
     await sftpManager.chmodFile(sessionId, remotePath, mode)
   })
 
-  ipcMain.handle('sftp:cancel', (_event: any, sessionId: string, remotePath: string, direction: string) => {
+  ipcMain.handle('sftp:cancel', (_event: any, sessionId: string, remotePath: string, localPath: string, direction: string) => {
     validateSessionId(sessionId)
-    return sftpManager.cancelTransfer(sessionId, remotePath, direction)
+    validatePath(remotePath, 'remote path')
+    validatePath(localPath, 'local path')
+    return sftpManager.cancelTransfer(sessionId, remotePath, localPath, direction)
   })
 
   ipcMain.handle('sftp:cancelAll', (_event: any, sessionId: string) => {
@@ -243,8 +263,34 @@ function registerIPC() {
 
   // Snippets
   ipcMain.handle('snippets:getAll', () => snippetRepo.getAllSnippets())
-  ipcMain.handle('snippets:create', (_event: any, snippet: any) => snippetRepo.createSnippet(snippet))
-  ipcMain.handle('snippets:update', (_event: any, id: string, snippet: any) => snippetRepo.updateSnippet(id, snippet))
+  ipcMain.handle('snippets:create', (_event: any, snippet: any) => {
+    if (!snippet?.name?.trim() || !snippet?.command?.trim()) {
+      throw new Error('Snippet name and command are required')
+    }
+    return snippetRepo.createSnippet({
+      name: snippet.name.trim(),
+      command: snippet.command.trim(),
+      tag: snippet.tag?.trim() || undefined
+    })
+  })
+  ipcMain.handle('snippets:update', (_event: any, id: string, snippet: any) => {
+    if (!id || typeof id !== 'string') {
+      throw new Error('Invalid snippet ID')
+    }
+    const updateData: any = {}
+    if (snippet.name !== undefined) {
+      if (!snippet.name.trim()) throw new Error('Snippet name cannot be empty')
+      updateData.name = snippet.name.trim()
+    }
+    if (snippet.command !== undefined) {
+      if (!snippet.command.trim()) throw new Error('Snippet command cannot be empty')
+      updateData.command = snippet.command.trim()
+    }
+    if (snippet.tag !== undefined) {
+      updateData.tag = snippet.tag.trim() || null
+    }
+    return snippetRepo.updateSnippet(id, updateData)
+  })
   ipcMain.handle('snippets:delete', (_event: any, id: string) => snippetRepo.deleteSnippet(id))
 
   // Known Hosts

@@ -4,6 +4,7 @@ interface Tab {
   hostName: string
   sessionId: string
   connected: boolean
+  viewMode?: ViewMode
 }
 
 type ViewMode = 'terminal' | 'sftp'

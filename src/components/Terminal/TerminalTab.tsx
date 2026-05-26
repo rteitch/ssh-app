@@ -15,6 +15,11 @@ export default function TerminalTab({ sessionId, isActive }: TerminalTabProps) {
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const cleanupRef = useRef<(() => void)[]>([])
+  const isActiveRef = useRef(isActive)
+
+  useEffect(() => {
+    isActiveRef.current = isActive
+  }, [isActive])
 
   const setupTerminal = useCallback(() => {
     if (!terminalRef.current || termRef.current) return
@@ -80,7 +85,7 @@ export default function TerminalTab({ sessionId, isActive }: TerminalTabProps) {
 
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
-      if (fitAddonRef.current && isActive) {
+      if (fitAddonRef.current && isActiveRef.current) {
         fitAddonRef.current.fit()
         const { cols, rows } = term
         window.sshApi.resizeShell(sessionId, cols, rows)
@@ -95,7 +100,7 @@ export default function TerminalTab({ sessionId, isActive }: TerminalTabProps) {
 
     // Send initial size
     window.sshApi.resizeShell(sessionId, term.cols, term.rows)
-  }, [sessionId, isActive])
+  }, [sessionId])
 
   useEffect(() => {
     setupTerminal()

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { SFTPFile } from '../../types'
 
 interface LocalPanelProps {
@@ -98,29 +98,7 @@ export default function LocalPanel({ onUpload, draggedJob }: LocalPanelProps) {
 
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Initialize Home path
-  useEffect(() => {
-    window.sshApi.fsGetHomeDir().then(home => {
-      setCurrentPath(home)
-      setPathInput(home)
-      loadLocalFiles(home)
-    }).catch(err => {
-      console.error(err)
-      setError('Gagal membaca direktori awal pengguna.')
-      setLoading(false)
-    })
-  }, [])
-
-  // Close context menus on outside click
-  useEffect(() => {
-    const handleOutsideClick = () => {
-      setContextMenu(null)
-    }
-    window.addEventListener('click', handleOutsideClick)
-    return () => window.removeEventListener('click', handleOutsideClick)
-  }, [])
-
-  const loadLocalFiles = async (targetPath: string) => {
+  const loadLocalFiles = useCallback(async (targetPath: string) => {
     setLoading(true)
     setError(null)
     setSelectedFile(null)
@@ -135,7 +113,29 @@ export default function LocalPanel({ onUpload, draggedJob }: LocalPanelProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  // Initialize Home path
+  useEffect(() => {
+    window.sshApi.fsGetHomeDir().then(home => {
+      setCurrentPath(home)
+      setPathInput(home)
+      loadLocalFiles(home)
+    }).catch(err => {
+      console.error(err)
+      setError('Gagal membaca direktori awal pengguna.')
+      setLoading(false)
+    })
+  }, [loadLocalFiles])
+
+  // Close context menus on outside click
+  useEffect(() => {
+    const handleOutsideClick = () => {
+      setContextMenu(null)
+    }
+    window.addEventListener('click', handleOutsideClick)
+    return () => window.removeEventListener('click', handleOutsideClick)
+  }, [])
 
   // Navigate Path
   const navigateTo = (targetPath: string) => {
@@ -466,7 +466,7 @@ export default function LocalPanel({ onUpload, draggedJob }: LocalPanelProps) {
                       onContextMenu={(e) => handleContextMenu(e, file)}
                       className={`hover:bg-[#313244]/40 cursor-pointer select-none transition-colors duration-100 ${isSelected ? 'bg-[#89b4fa]/10 text-[#89b4fa]' : 'text-[#cdd6f4]'}`}
                     >
-                      <td className="px-5 py-2.5 font-medium flex items-center gap-3 truncate max-w-0">
+                      <td className="px-5 py-2.5 font-medium flex items-center gap-3 truncate">
                         {file.isDirectory ? <FolderIcon /> : <FileIcon />}
                         <span className="truncate">{file.filename}</span>
                       </td>

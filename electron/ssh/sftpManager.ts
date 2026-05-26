@@ -13,7 +13,12 @@ const activeTransfers = new Map<string, ActiveTransfer>()
 
 export async function getSFTP(sessionId: string): Promise<SFTPWrapper> {
   if (sftpSessions.has(sessionId)) {
-    return sftpSessions.get(sessionId)!
+    const session = getSession(sessionId)
+    if (!session || !session.connected) {
+      sftpSessions.delete(sessionId)
+    } else {
+      return sftpSessions.get(sessionId)!
+    }
   }
 
   const session = getSession(sessionId)
@@ -22,6 +27,10 @@ export async function getSFTP(sessionId: string): Promise<SFTPWrapper> {
   }
 
   return new Promise((resolve, reject) => {
+    if (!session || !session.connected) {
+      reject(new Error('SSH session disconnected during SFTP initialization'))
+      return
+    }
     session.client.sftp((err, sftp) => {
       if (err) {
         reject(err)
@@ -68,8 +77,8 @@ export async function listDirectory(sessionId: string, remotePath: string): Prom
   })
 }
 
-function transferKey(sessionId: string, remotePath: string, direction: string): string {
-  return `${sessionId}:${direction}:${remotePath}`
+function transferKey(sessionId: string, remotePath: string, localPath: string, direction: string): string {
+  return `${sessionId}:${direction}:${remotePath}:${localPath}`
 }
 
 export async function downloadFile(
@@ -79,7 +88,7 @@ export async function downloadFile(
   onProgress?: (transferred: number, total: number) => void
 ): Promise<void> {
   const sftp = await getSFTP(sessionId)
-  const key = transferKey(sessionId, remotePath, 'download')
+  const key = transferKey(sessionId, remotePath, localPath, 'download')
   const transfer: ActiveTransfer = { cancelled: false, sessionId }
   activeTransfers.set(key, transfer)
 
@@ -117,7 +126,7 @@ export async function uploadFile(
   onProgress?: (transferred: number, total: number) => void
 ): Promise<void> {
   const sftp = await getSFTP(sessionId)
-  const key = transferKey(sessionId, remotePath, 'upload')
+  const key = transferKey(sessionId, remotePath, localPath, 'upload')
   const transfer: ActiveTransfer = { cancelled: false, sessionId }
   activeTransfers.set(key, transfer)
 
@@ -148,8 +157,8 @@ export async function uploadFile(
   })
 }
 
-export function cancelTransfer(sessionId: string, remotePath: string, direction: string): boolean {
-  const key = transferKey(sessionId, remotePath, direction)
+export function cancelTransfer(sessionId: string, remotePath: string, localPath: string, direction: string): boolean {
+  const key = transferKey(sessionId, remotePath, localPath, direction)
   const transfer = activeTransfers.get(key)
   if (transfer) {
     transfer.cancelled = true

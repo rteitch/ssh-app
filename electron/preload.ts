@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('sshApi', {
   sftpMkdir: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:mkdir', sessionId, remotePath),
   sftpRename: (sessionId: string, oldPath: string, newPath: string) => ipcRenderer.invoke('sftp:rename', sessionId, oldPath, newPath),
   sftpChmod: (sessionId: string, remotePath: string, mode: number) => ipcRenderer.invoke('sftp:chmod', sessionId, remotePath, mode),
-  sftpCancel: (sessionId: string, remotePath: string, direction: string) => ipcRenderer.invoke('sftp:cancel', sessionId, remotePath, direction),
+  sftpCancel: (sessionId: string, remotePath: string, localPath: string, direction: string) => ipcRenderer.invoke('sftp:cancel', sessionId, remotePath, localPath, direction),
   sftpCancelAll: (sessionId: string) => ipcRenderer.invoke('sftp:cancelAll', sessionId),
 
   // Snippets

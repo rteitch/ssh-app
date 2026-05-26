@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { SFTPFile } from '../../types'
 
 interface RemotePanelProps {
@@ -73,13 +73,13 @@ const SortIcon = ({ active, direction }: { active: boolean, direction: 'asc' | '
 }
 
 export default function RemotePanel({ sessionId, onDownload, onDropUpload, draggedJob }: RemotePanelProps) {
-  const [currentPath, setCurrentPath] = useState<string>('.')
+  const [currentPath, setCurrentPath] = useState<string>('/')
   const [files, setFiles] = useState<SFTPFile[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   
   // Navigation & Search States
-  const [pathInput, setPathInput] = useState<string>('.')
+  const [pathInput, setPathInput] = useState<string>('/')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [showHidden, setShowHidden] = useState<boolean>(false)
   
@@ -111,20 +111,7 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
 
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Initialize Remote path (root /home mapping)
-  useEffect(() => {
-    loadRemoteFiles('.')
-  }, [sessionId])
-
-  useEffect(() => {
-    const handleOutsideClick = () => {
-      setContextMenu(null)
-    }
-    window.addEventListener('click', handleOutsideClick)
-    return () => window.removeEventListener('click', handleOutsideClick)
-  }, [])
-
-  const loadRemoteFiles = async (targetPath: string) => {
+  const loadRemoteFiles = useCallback(async (targetPath: string) => {
     setLoading(true)
     setError(null)
     setSelectedFile(null)
@@ -139,7 +126,20 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
     } finally {
       setLoading(false)
     }
-  }
+  }, [sessionId])
+
+  // Initialize Remote path (root /home mapping)
+  useEffect(() => {
+    loadRemoteFiles('/')
+  }, [sessionId, loadRemoteFiles])
+
+  useEffect(() => {
+    const handleOutsideClick = () => {
+      setContextMenu(null)
+    }
+    window.addEventListener('click', handleOutsideClick)
+    return () => window.removeEventListener('click', handleOutsideClick)
+  }, [])
 
   // Navigate Path
   const navigateTo = (targetPath: string) => {
@@ -549,7 +549,7 @@ export default function RemotePanel({ sessionId, onDownload, onDropUpload, dragg
                       onContextMenu={(e) => handleContextMenu(e, file)}
                       className={`hover:bg-[#313244]/40 cursor-pointer select-none transition-colors duration-100 ${isSelected ? 'bg-[#a6e3a1]/10 text-[#a6e3a1]' : 'text-[#cdd6f4]'}`}
                     >
-                      <td className="px-5 py-2.5 font-medium flex items-center gap-3 truncate max-w-0">
+                      <td className="px-5 py-2.5 font-medium flex items-center gap-3 truncate">
                         {file.isDirectory ? <FolderIcon /> : <FileIcon />}
                         <span className="truncate">{file.filename}</span>
                       </td>

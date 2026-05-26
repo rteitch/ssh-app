@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import LocalPanel from './LocalPanel'
 import RemotePanel from './RemotePanel'
 
@@ -25,7 +25,7 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
   const [remoteRefresh, setRemoteRefresh] = useState(0)
   const [transferQueue, setTransferQueue] = useState<TransferJob[]>([])
   const [showQueue, setShowQueue] = useState(true)
-  const [activeTransferPaths, setActiveTransferPaths] = useState<Set<string>>(new Set())
+  const activeTransferPathsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const removeProgressListener = window.sshApi.onTransferProgress((progress: any) => {
@@ -47,7 +47,7 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
   }, [])
 
   const handleUpload = useCallback(async (localPath: string, remoteDestPath: string) => {
-    if (activeTransferPaths.has(localPath)) {
+    if (activeTransferPathsRef.current.has(`upload:${localPath}`)) {
       alert('File sedang dalam proses transfer!')
       return
     }
@@ -55,7 +55,7 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
     const jobId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const newJob: TransferJob = { id: jobId, filename, localPath, remotePath: remoteDestPath, direction: 'upload', size: 0, transferred: 0, percent: 0, status: 'pending' }
     setTransferQueue(prev => [newJob, ...prev])
-    setActiveTransferPaths(prev => { const n = new Set(prev); n.add(localPath); return n })
+    activeTransferPathsRef.current.add(`upload:${localPath}`)
     try {
       await window.sshApi.sftpUpload(sessionId, localPath, remoteDestPath)
       setTransferQueue(prev => prev.map(j => (j.id === jobId ? { ...j, status: 'completed', percent: 100 } : j)))
@@ -63,22 +63,22 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
     } catch (err: any) {
       setTransferQueue(prev => prev.map(j => (j.id === jobId ? { ...j, status: 'failed', error: err.message || String(err) } : j)))
     } finally {
-      setActiveTransferPaths(prev => { const n = new Set(prev); n.delete(localPath); return n })
+      activeTransferPathsRef.current.delete(`upload:${localPath}`)
     }
-  }, [sessionId, activeTransferPaths])
+  }, [sessionId])
 
   const handleDownload = useCallback(async (remotePath: string, filename: string) => {
     const result = await window.sshApi.showSaveDialog({ title: 'Download File', defaultPath: filename, buttonLabel: 'Download' })
     if (result.canceled || !result.filePath) return
     const localPath = result.filePath
-    if (activeTransferPaths.has(remotePath)) {
+    if (activeTransferPathsRef.current.has(`download:${remotePath}`)) {
       alert('File sedang dalam proses transfer!')
       return
     }
     const jobId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const newJob: TransferJob = { id: jobId, filename, localPath, remotePath, direction: 'download', size: 0, transferred: 0, percent: 0, status: 'pending' }
     setTransferQueue(prev => [newJob, ...prev])
-    setActiveTransferPaths(prev => { const n = new Set(prev); n.add(remotePath); return n })
+    activeTransferPathsRef.current.add(`download:${remotePath}`)
     try {
       await window.sshApi.sftpDownload(sessionId, remotePath, localPath)
       setTransferQueue(prev => prev.map(j => (j.id === jobId ? { ...j, status: 'completed', percent: 100 } : j)))
@@ -86,9 +86,9 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
     } catch (err: any) {
       setTransferQueue(prev => prev.map(j => (j.id === jobId ? { ...j, status: 'failed', error: err.message || String(err) } : j)))
     } finally {
-      setActiveTransferPaths(prev => { const n = new Set(prev); n.delete(remotePath); return n })
+      activeTransferPathsRef.current.delete(`download:${remotePath}`)
     }
-  }, [sessionId, activeTransferPaths])
+  }, [sessionId])
 
   const handleDropUpload = useCallback((localPath: string, remoteDestPath: string) => {
     handleUpload(localPath, remoteDestPath)
@@ -96,15 +96,11 @@ export default function SftpManager({ sessionId, isActive }: SftpManagerProps) {
 
   const handleCancelTransfer = useCallback(async (job: TransferJob) => {
     try {
-      await window.sshApi.sftpCancel(sessionId, job.remotePath, job.direction)
+      await window.sshApi.sftpCancel(sessionId, job.remotePath, job.localPath, job.direction)
       setTransferQueue(prev => prev.map(j =>
         j.id === job.id ? { ...j, status: 'cancelled' as const } : j
       ))
-      setActiveTransferPaths(prev => {
-        const n = new Set(prev)
-        n.delete(job.direction === 'upload' ? job.localPath : job.remotePath)
-        return n
-      })
+      activeTransferPathsRef.current.delete(`${job.direction}:${job.direction === 'upload' ? job.localPath : job.remotePath}`)
     } catch (err: any) {
       console.error('Cancel failed:', err)
     }

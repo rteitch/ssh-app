@@ -113,15 +113,89 @@ export default function AddHostModal({ host, onSave, onClose }: AddHostModalProp
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const hostData: any = {
-      name, group_name: groupName, host: hostname,
-      port: parseInt(port) || 22, username, auth_type: authType
+
+    // Validate required fields are not empty
+    if (!name.trim()) {
+      alert('Display Name cannot be empty')
+      return
     }
-    if (authType === 'password') hostData.password_enc = password
-    else if (authType === 'key') hostData.key_path = keyPath
-    else if (authType === 'key_passphrase') { hostData.key_path = keyPath; hostData.passphrase_enc = passphrase }
+    if (!hostname.trim()) {
+      alert('Hostname / IP cannot be empty')
+      return
+    }
+    if (!username.trim()) {
+      alert('Username cannot be empty')
+      return
+    }
+
+    const portNum = parseInt(port, 10)
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      alert('Port must be a valid number between 1 and 65535')
+      return
+    }
+
+    if (authType === 'key' || authType === 'key_passphrase') {
+      if (!keyPath.trim()) {
+        alert('Please select or specify a valid SSH key path')
+        return
+      }
+      try {
+        const exists = await window.sshApi.fsExistsLocal(keyPath.trim())
+        if (!exists) {
+          alert(`SSH key file not found at: ${keyPath}`)
+          return
+        }
+      } catch (err) {
+        // Fallback if local fs checks throw
+      }
+    }
+
+    if (authType === 'password') {
+      const isPasswordRequired = !host || host.auth_type !== 'password' || !host.password_enc
+      if (isPasswordRequired && !password) {
+        alert('Password cannot be empty')
+        return
+      }
+    }
+
+    if (authType === 'key_passphrase') {
+      const isPassphraseRequired = !host || host.auth_type !== 'key_passphrase' || !host.passphrase_enc
+      if (isPassphraseRequired && !passphrase) {
+        alert('Passphrase cannot be empty')
+        return
+      }
+    }
+
+    const hostData: any = {
+      name: name.trim(),
+      group_name: groupName.trim() || 'Default',
+      host: hostname.trim(),
+      port: portNum,
+      username: username.trim(),
+      auth_type: authType
+    }
+
+    if (authType === 'password') {
+      if (password) {
+        hostData.password_enc = password
+      }
+      // Bersihkan key dan passphrase lama di database jika tipe auth berubah
+      hostData.key_path = null
+      hostData.passphrase_enc = null
+    } else if (authType === 'key') {
+      hostData.key_path = keyPath.trim()
+      hostData.password_enc = null
+      hostData.passphrase_enc = null
+    } else if (authType === 'key_passphrase') {
+      hostData.key_path = keyPath.trim()
+      if (passphrase) {
+        hostData.passphrase_enc = passphrase
+      }
+      hostData.password_enc = null
+    }
+
     onSave(hostData)
   }
 
